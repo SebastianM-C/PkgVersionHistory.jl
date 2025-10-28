@@ -2,6 +2,8 @@
 
 A Julia package to check when package versions were registered in the General registry.
 
+> **⚠️ Experimental Package**: This package is vibe-coded and considered experimental. APIs may change, and there might be rough edges. Use with appropriate caution in production environments.
+
 ## Installation
 
 ```julia
@@ -183,6 +185,12 @@ using PkgVersionHistory, Scratch
 scratch_dir = @get_scratch!("General")
 rm(scratch_dir; recursive=true)
 ```
+
+## Related Projects
+
+- [PackageAnalyzer.jl](https://github.com/JuliaEcosystem/PackageAnalyzer.jl) - Analyzes packages in the General registry for documentation, testing, and CI coverage. While PackageAnalyzer focuses on package content and quality metrics, PkgVersionHistory focuses on registration timestamps and version history.
+- [RegistryInstances.jl](https://github.com/GunnarFarneback/RegistryInstances.jl) - Provides stable access to registry metadata including compatibility information and tree hashes.
+- [JuliaRegistryAnalysis.jl](https://github.com/KristofferC/JuliaRegistryAnalysis.jl) - Analyzes package dependencies and creates dependency graphs for packages in the General registry.
 
 ## License
 
