@@ -1,5 +1,8 @@
 # PkgVersionHistory.jl
 
+[![Build Status](https://github.com/yourusername/PkgVersionHistory.jl/workflows/CI/badge.svg)](https://github.com/yourusername/PkgVersionHistory.jl/actions)
+[![Coverage](https://codecov.io/gh/yourusername/PkgVersionHistory.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/yourusername/PkgVersionHistory.jl)
+
 A Julia package to check when package versions were registered in the General registry.
 
 > **⚠️ Experimental Package**: This package is vibe-coded and considered experimental. APIs may change, and there might be rough edges. Use with appropriate caution in production environments.
