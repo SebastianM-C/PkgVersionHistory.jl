@@ -167,7 +167,7 @@ This shows any open PRs for the package, including their AutoMerge status.
 
 ## Requirements
 
-- Julia 1.6 or higher
+- Julia 1.10 or higher
 - Git (for cloning and querying the registry)
 - ~400 MB disk space for the General registry (one-time, in scratch space)
 - GitHub CLI (`gh`) - optional, for checking pending PRs

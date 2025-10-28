@@ -24,8 +24,8 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.6'  # LTS
-          - '1'    # Latest stable
+          - '1.10'  # Current LTS
+          - '1'     # Latest stable
           - 'nightly'
         os:
           - ubuntu-latest
@@ -36,7 +36,7 @@ jobs:
         exclude:
           # Reduce the number of macOS jobs due to runner costs
           - os: macOS-latest
-            version: '1.6'
+            version: '1.10'
           - os: macOS-latest
             version: 'nightly'
     steps:
