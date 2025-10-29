@@ -182,8 +182,9 @@ function get_pkg_latest_version(package_name::String)
     end
 
     # Construct path to the package's Versions.toml in Pkg's registry
+    # Note that git expects `/` always
     first_letter = uppercase(string(first(package_name)))
-    versions_file = joinpath(pkg_registry, first_letter, package_name, "Versions.toml")
+    versions_file = "$pkg_registry/$first_letter/$package_name/Versions.toml"
 
     if !isfile(versions_file)
         return nothing
@@ -221,11 +222,12 @@ Returns `nothing` if the package doesn't exist.
 """
 function get_package_path(registry_path::String, package_name::String)
     # Packages are organized by first letter and package name
+    # Note that git expects `/` always
     first_letter = uppercase(string(first(package_name)))
-    pkg_path = joinpath(first_letter, package_name)
+    pkg_path = "$first_letter/$package_name"
 
     # Check if the Versions.toml file exists for this package
-    versions_file = joinpath(pkg_path, "Versions.toml")
+    versions_file = "$pkg_path/Versions.toml"
 
     # Use git ls-tree to check if this path exists in the repo
     try
