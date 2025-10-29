@@ -108,7 +108,7 @@ function get_latest_version(package_name::String)
         error("Package '$package_name' not found in General registry")
     end
 
-    versions_file = joinpath(pkg_path, "Versions.toml")
+    versions_file = "$pkg_path/Versions.toml"
     return get_latest_version_from_file(registry_path, versions_file)
 end
 
