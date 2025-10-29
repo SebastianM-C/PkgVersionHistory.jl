@@ -108,7 +108,7 @@ function get_latest_version(package_name::String)
         error("Package '$package_name' not found in General registry")
     end
 
-    versions_file = "$(pkg_path)/Versions.toml"
+    versions_file = joinpath(pkg_path, "Versions.toml")
     return get_latest_version_from_file(registry_path, versions_file)
 end
 
@@ -145,7 +145,7 @@ function get_all_versions_from_file(registry_path::String, versions_file::String
     current_version = nothing
     is_yanked = false
 
-    for line in split(content, '\n')
+    for line in eachline(IOBuffer(content))
         # Check for version header
         if occursin(r"^\[\"(.+?)\"\]", line)
             # Save previous version if not yanked (or if we include yanked)
@@ -186,7 +186,7 @@ function is_version_yanked(registry_path::String, versions_file::String, version
 
     # Find the version section and check for yanked flag
     in_version_section = false
-    for line in split(content, '\n')
+    for line in eachline(IOBuffer(content))
         # Check if we're entering the target version section
         if occursin(Regex("^\\[\"$(replace(version, "." => "\\."))\"\\]"), line)
             in_version_section = true

@@ -225,7 +225,7 @@ function get_package_path(registry_path::String, package_name::String)
     pkg_path = joinpath(first_letter, package_name)
 
     # Check if the Versions.toml file exists for this package
-    versions_file = "$(pkg_path)/Versions.toml"
+    versions_file = joinpath(pkg_path, "Versions.toml")
 
     # Use git ls-tree to check if this path exists in the repo
     try
