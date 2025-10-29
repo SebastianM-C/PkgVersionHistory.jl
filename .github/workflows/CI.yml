@@ -26,7 +26,7 @@ jobs:
         version:
           - '1.10'  # Current LTS
           - '1'     # Latest stable
-          - 'nightly'
+          - 'pre'
         os:
           - ubuntu-latest
           - macOS-latest
