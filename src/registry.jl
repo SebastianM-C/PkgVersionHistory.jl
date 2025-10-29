@@ -192,11 +192,10 @@ function get_pkg_latest_version(package_name::String)
 
     try
         # Read and parse the Versions.toml file
-        content = read(versions_file, String)
 
         # Extract all version numbers
         versions = String[]
-        for line in split(content, '\n')
+        for line in eachline(versions_file)
             m = match(r"^\[\"(.+?)\"\]", line)
             if !isnothing(m)
                 push!(versions, m.captures[1])
