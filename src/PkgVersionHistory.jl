@@ -8,7 +8,7 @@ using Scratch
 using TimeZones
 using gh_cli_jll
 
-export when, update_registry!
+export when, update_registry!, check_pending_prs
 
 include("registry.jl")
 include("core.jl")

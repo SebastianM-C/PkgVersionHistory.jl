@@ -18,7 +18,19 @@ Get the timestamp when a package version was registered.
 ```julia
 when("Example")  # Latest version
 when("Example@1.2.3")  # Specific version
+
+# Check for pending registry PRs programmatically
+prs = check_pending_prs("Example")
+if !isnothing(prs)
+    for pr in prs
+        println("PR #\$(pr["number"]): \$(pr["title"])")
+    end
+end
 ```
+
+# See also
+- [`check_pending_prs`](@ref): Check for pending PRs for a package in the General registry
+- [`update_registry!`](@ref): Manually update the local registry cache
 """
 function when(package_spec::String)
     # Parse package name and version

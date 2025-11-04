@@ -18,10 +18,49 @@ function get_gh_command()
 end
 
 """
-    check_pending_prs(package_name::String)
+    check_pending_prs(package_name::String) -> Union{Vector{Dict}, Nothing}
 
 Check for pending PRs for a package in the General registry.
-Returns information about open PRs and their AutoMerge status.
+
+Uses the GitHub CLI to search for open pull requests in JuliaRegistries/General
+that mention the specified package name.
+
+# Arguments
+- `package_name::String`: The name of the package to search for
+
+# Returns
+- `Vector{Dict}`: Array of PR information dictionaries, each containing:
+  - `number`: PR number
+  - `title`: PR title
+  - `author`: Author information (with `login` field)
+  - `createdAt`: Creation timestamp (ISO 8601 format)
+  - `labels`: Array of label information (each with `name` field)
+- `nothing`: If no PRs found or if GitHub CLI is unavailable
+
+# Examples
+```julia
+# Check for pending PRs
+prs = check_pending_prs("OptimizationMadNLP")
+
+if !isnothing(prs)
+    for pr in prs
+        println("PR #\$(pr["number"]): \$(pr["title"])")
+
+        # Check for AutoMerge label
+        has_automerge = any(l -> l["name"] == "automerge", pr["labels"])
+        if has_automerge
+            println("  [Will auto-merge]")
+        end
+    end
+else
+    println("No pending PRs found")
+end
+```
+
+# Notes
+- Requires GitHub CLI (`gh`) to be installed, or uses `gh_cli_jll` as fallback
+- Returns `nothing` if the search fails or if no PRs are found
+- The search looks for PRs with the package name in the title or body
 """
 function check_pending_prs(package_name::String)
     gh_cmd = get_gh_command()
