@@ -34,11 +34,35 @@ function get_registry_path()
         end
 
         # Clone as a bare repository (no working tree, saves space)
-        run(git(["clone", "--bare", "https://github.com/JuliaRegistries/General.git", registry_path]))
-        @info "Registry cloned successfully"
+        try
+            run(git(["clone", "--bare", "https://github.com/JuliaRegistries/General.git", registry_path]))
+            @info "Registry cloned successfully"
+        catch e
+            @error "Failed to clone General registry" exception=(e, catch_backtrace())
+            rethrow()
+        end
     end
 
     return registry_path
+end
+
+"""
+    get_pkg_registry_tarball()
+
+Find the path to Pkg's General registry tarball.
+Returns `nothing` if not found.
+
+Pkg stores registries as tarballs (e.g., General.tar.gz), not as extracted directories.
+"""
+function get_pkg_registry_tarball()
+    # Pkg's registries are stored as tarballs in DEPOT_PATH[i]/registries/
+    for depot in DEPOT_PATH
+        tarball_path = joinpath(depot, "registries", "General.tar.gz")
+        if isfile(tarball_path)
+            return tarball_path
+        end
+    end
+    return nothing
 end
 
 """
@@ -46,9 +70,13 @@ end
 
 Find the path to Pkg's General registry.
 Returns `nothing` if not found.
+
+This function is kept for backward compatibility with get_pkg_latest_version,
+which needs to read Versions.toml files directly.
 """
 function get_pkg_registry_path()
     # Pkg's registries are stored in DEPOT_PATH[1]/registries/General
+    # Check if an extracted directory exists (older Pkg versions or extracted manually)
     for depot in DEPOT_PATH
         registry_path = joinpath(depot, "registries", "General")
         if isdir(registry_path)
@@ -81,10 +109,31 @@ function get_registry_last_update(registry_path::String)
 end
 
 """
+    get_tarball_last_update(tarball_path::String) -> Union{DateTime, Nothing}
+
+Get the modification time of a registry tarball.
+Returns `nothing` if unable to determine.
+"""
+function get_tarball_last_update(tarball_path::String)
+    try
+        # Get the file modification time
+        mtime = stat(tarball_path).mtime
+        # Convert Unix timestamp to DateTime
+        return DateTime(1970) + Second(round(Int64, mtime))
+    catch e
+        @debug "Failed to get tarball modification time" exception=e
+        return nothing
+    end
+end
+
+"""
     should_update_registry() -> Bool
 
 Check if our cached registry should be updated by comparing with Pkg's registry.
 Returns true if our cache is older than Pkg's registry.
+
+Supports both modern Pkg (using compressed tarball) and older Pkg versions
+(using unpacked directory).
 """
 function should_update_registry()
     # Get our registry timestamp
@@ -96,16 +145,33 @@ function should_update_registry()
         return true
     end
 
-    # Get Pkg's registry timestamp
-    pkg_registry = get_pkg_registry_path()
-    if isnothing(pkg_registry)
-        # Pkg registry not found, don't auto-update
-        return false
+    # Check both tarball (modern Pkg with package servers) and directory (older Pkg)
+    # Use whichever is newer
+    pkg_timestamp = nothing
+
+    # Check for compressed tarball (modern Pkg)
+    pkg_tarball = get_pkg_registry_tarball()
+    if !isnothing(pkg_tarball)
+        tarball_timestamp = get_tarball_last_update(pkg_tarball)
+        if !isnothing(tarball_timestamp)
+            pkg_timestamp = tarball_timestamp
+        end
     end
 
-    pkg_timestamp = get_registry_last_update(pkg_registry)
+    # Check for unpacked directory (older Pkg versions)
+    pkg_registry = get_pkg_registry_path()
+    if !isnothing(pkg_registry)
+        dir_timestamp = get_registry_last_update(pkg_registry)
+        if !isnothing(dir_timestamp)
+            # Use the newer of the two timestamps if both exist
+            if isnothing(pkg_timestamp) || dir_timestamp > pkg_timestamp
+                pkg_timestamp = dir_timestamp
+            end
+        end
+    end
+
+    # If we couldn't find either format, don't auto-update
     if isnothing(pkg_timestamp)
-        # Can't determine Pkg's timestamp, don't auto-update
         return false
     end
 
@@ -124,9 +190,10 @@ function update_registry!()
     @info "Updating registry..."
 
     try
-        # Use Git.jl for simpler fetch operation
-        # Fetch all branches from origin
-        run(git(["-C", registry_path, "fetch", "origin", "refs/heads/*:refs/remotes/origin/*"]))
+        # Fetch only the master branch from origin
+        # We only need master, and fetching all branches can fail with non-fast-forward errors
+        # on registrator branches, which would prevent refs from being updated properly
+        run(git(["-C", registry_path, "fetch", "origin", "refs/heads/master:refs/remotes/origin/master"]))
 
         # Update master branch to point to origin/master
         # Get the hash of origin/master
@@ -141,9 +208,9 @@ function update_registry!()
         @info "Registry updated"
     catch e
         if occursin("authentication", lowercase(string(e)))
-            @warn "Registry update failed due to authentication. The cached registry will be used." exception=e
+            @warn "Registry update failed due to authentication. The cached registry will be used." exception=(e, catch_backtrace())
         else
-            @warn "Registry update failed. The cached registry will be used." exception=e
+            @warn "Registry update failed. The cached registry will be used." exception=(e, catch_backtrace())
         end
     end
 
