@@ -2,6 +2,7 @@
 
 using Git
 using Dates: DateTime, Second
+using TOML
 
 """
     when(package_spec::String) -> DateTime
@@ -149,36 +150,20 @@ Get all versions from a Versions.toml file.
 Vector of version strings
 """
 function get_all_versions_from_file(registry_path::String, versions_file::String; include_yanked::Bool=true)
-    # Get the content of Versions.toml
+    # Get the content of Versions.toml and parse it
     content = read_file_from_repo(registry_path, versions_file)
+    versions_dict = TOML.parse(content)
 
-    # Parse versions and check for yanked flag
     versions = String[]
-    current_version = nothing
-    is_yanked = false
-
-    for line in eachline(IOBuffer(content))
-        # Check for version header
-        if occursin(r"^\[\"(.+?)\"\]", line)
-            # Save previous version if not yanked (or if we include yanked)
-            if !isnothing(current_version) && (include_yanked || !is_yanked)
-                push!(versions, current_version)
-            end
-
-            # Start new version
-            m = match(r"^\[\"(.+?)\"\]", line)
-            current_version = m.captures[1]
-            is_yanked = false
-        elseif occursin(r"^yanked\s*=\s*true", line)
-            # Mark current version as yanked
-            is_yanked = true
+    for (version, info) in versions_dict
+        is_yanked = get(info, "yanked", false)
+        if include_yanked || !is_yanked
+            push!(versions, version)
         end
     end
 
-    # Don't forget the last version
-    if !isnothing(current_version) && (include_yanked || !is_yanked)
-        push!(versions, current_version)
-    end
+    # Sort versions to ensure consistent ordering
+    sort!(versions, by=VersionNumber)
 
     if isempty(versions)
         error("No versions found in $versions_file")
@@ -193,22 +178,13 @@ end
 Check if a specific version is yanked.
 """
 function is_version_yanked(registry_path::String, versions_file::String, version::String)
-    # Get the content of Versions.toml
+    # Get the content of Versions.toml and parse it
     content = read_file_from_repo(registry_path, versions_file)
+    versions_dict = TOML.parse(content)
 
-    # Find the version section and check for yanked flag
-    in_version_section = false
-    for line in eachline(IOBuffer(content))
-        # Check if we're entering the target version section
-        if occursin(Regex("^\\[\"$(replace(version, "." => "\\."))\"\\]"), line)
-            in_version_section = true
-        # Check if we're entering a new version section
-        elseif occursin(r"^\[\"", line)
-            in_version_section = false
-        # Check for yanked flag in current section
-        elseif in_version_section && occursin(r"^yanked\s*=\s*true", line)
-            return true
-        end
+    # Check if version exists and has yanked flag
+    if haskey(versions_dict, version)
+        return get(versions_dict[version], "yanked", false)
     end
 
     return false

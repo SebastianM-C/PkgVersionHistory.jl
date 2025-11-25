@@ -3,7 +3,7 @@
 [![CI](https://github.com/SebastianM-C/PkgVersionHistory.jl/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/SebastianM-C/PkgVersionHistory.jl/actions/workflows/CI.yml)
 [![Coverage](https://codecov.io/gh/SebastianM-C/PkgVersionHistory.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/SebastianM-C/PkgVersionHistory.jl)
 
-A Julia package to check when package versions were registered in the General registry.
+A Julia package to check when package versions were registered in Julia registries.
 
 > **⚠️ Experimental Package**: This package is vibe-coded and considered experimental. APIs may change, and there might be rough edges. Use with appropriate caution in production environments.
 
@@ -17,6 +17,7 @@ Pkg.add(url="https://github.com/SebastianM-C/PkgVersionHistory.jl")
 ## Features
 
 - **Check registration timestamps**: Find out when a specific package version was registered
+- **Multiple registries**: Query any registry in your Pkg depot (General, private registries, etc.)
 - **REPL integration**: Use the convenient `when` command in a custom REPL mode (`}`)
 - **Multiple packages**: Query multiple packages at once
 - **Pending PRs**: Automatically check for open registration PRs when querying latest versions
@@ -43,8 +44,11 @@ when> when Example@0.5      # Resolves to 0.5.0 automatically
 # Check multiple packages
 when> when JSON DataFrames HTTP
 
-# Refresh the registry cache
-when> refresh
+# Registry management
+when> registry show         # Show current registry
+when> registry list         # List available registries
+when> registry use General  # Switch to a different registry
+when> registry refresh      # Update the registry cache
 
 # Get help
 when> help
@@ -109,14 +113,16 @@ The programmatic API returns a `DateTime` object (not formatted), which you can 
 
 The package works by:
 
-1. Cloning a bare copy of the [General registry](https://github.com/JuliaRegistries/General) to a scratch space
+1. Cloning a bare copy of the configured registry to a scratch space
 2. Using git to query the commit history for when specific package versions were added
 3. Parsing the commit timestamps to provide registration times
 
 The registry is cloned only once and stored in a [Scratch.jl](https://github.com/JuliaPackaging/Scratch.jl) managed directory:
 ```
-~/.julia/scratchspaces/<package-uuid>/General/
+~/.julia/scratchspaces/<package-uuid>/<registry-name>/
 ```
+
+By default, it uses the [General registry](https://github.com/JuliaRegistries/General), but you can switch to any registry available in your Pkg depot.
 
 **Benefits of using Scratch.jl:**
 - Automatic cleanup when the package is removed
@@ -134,16 +140,43 @@ You can also manually update the registry:
 
 **In REPL mode:**
 ```julia-repl
-when> refresh
+when> registry refresh
 ```
 
 **Programmatically:**
 ```julia
 using PkgVersionHistory
-PkgVersionHistory.update_registry!()
+update_registry!()
 ```
 
-The registry is compared with Pkg's registry (in `~/.julia/registries/General`) to ensure you have the latest data that Pkg knows about.
+The registry is compared with Pkg's registry to ensure you have the latest data that Pkg knows about.
+
+### Switching Registries
+
+You can query packages from any registry in your Pkg depot:
+
+**In REPL mode:**
+```julia-repl
+when> registry list           # See available registries
+when> registry use MyRegistry # Switch to a different registry
+when> registry show           # Show current registry
+```
+
+**Programmatically:**
+```julia
+using PkgVersionHistory
+
+# List all available registries
+list_registries()
+
+# Switch to a different registry
+set_registry!("MyRegistry")
+
+# Get current registry URL
+get_registry_url()
+```
+
+**Note:** Only registries already added to Pkg can be used. To add a new registry, use `]registry add <url>` in Pkg mode first.
 
 ## Checking Pending PRs
 
@@ -174,7 +207,7 @@ This shows any open PRs for the package, including their AutoMerge status.
 
 ## Disk Space Management
 
-The General registry is about 400 MB and is stored in a scratch space managed by Scratch.jl.
+Registry caches are stored in scratch spaces managed by Scratch.jl. The General registry is about 400 MB.
 
 To clean up scratch spaces across all packages:
 ```julia
@@ -182,10 +215,10 @@ using Pkg
 Pkg.gc()  # Removes scratch spaces from uninstalled packages
 ```
 
-To manually remove PkgVersionHistory's registry cache:
+To manually remove a registry cache:
 ```julia
 using PkgVersionHistory, Scratch
-scratch_dir = @get_scratch!("General")
+scratch_dir = @get_scratch!("General")  # or other registry name
 rm(scratch_dir; recursive=true)
 ```
 

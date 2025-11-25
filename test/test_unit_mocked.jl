@@ -17,8 +17,8 @@ using TimeZones
             for cmd in ["help", "?", "  help  "]
                 result = PkgVersionHistory.parse_when_command(cmd)
                 @test result isa Expr
-                # The expression should be a block that prints help text
-                @test result.head in (:block, :begin)
+                # The expression should call show_repl_help
+                @test occursin("show_repl_help", string(result))
             end
 
             # Test that invalid case variations are treated as unknown commands
@@ -63,10 +63,31 @@ using TimeZones
             end
         end
 
-        @testset "Refresh command" begin
-            result = PkgVersionHistory.parse_when_command("refresh")
+        @testset "Registry subcommands" begin
+            # registry refresh
+            result = PkgVersionHistory.parse_when_command("registry refresh")
             @test result isa Expr
-            @test occursin("execute_refresh_command", string(result))
+            @test occursin("execute_registry_command", string(result))
+
+            # registry show
+            result = PkgVersionHistory.parse_when_command("registry show")
+            @test result isa Expr
+            @test occursin("execute_registry_command", string(result))
+
+            # registry list
+            result = PkgVersionHistory.parse_when_command("registry list")
+            @test result isa Expr
+            @test occursin("execute_registry_command", string(result))
+
+            # registry use
+            result = PkgVersionHistory.parse_when_command("registry use General")
+            @test result isa Expr
+            @test occursin("execute_registry_command", string(result))
+
+            # registry without subcommand shows help
+            result = PkgVersionHistory.parse_when_command("registry")
+            @test result isa Expr
+            @test occursin("show_registry_help", string(result))
         end
 
         @testset "Invalid commands" begin
@@ -74,6 +95,7 @@ using TimeZones
                 "invalid",
                 "unknown",
                 "abc123",
+                "refresh",  # refresh is no longer top-level (use registry refresh)
                 "when",  # when without package
             ]
 
@@ -83,7 +105,7 @@ using TimeZones
                     # Should return usage message
                     @test result isa Expr
                 else
-                    # Should return error message
+                    # Should return error message (unknown command)
                     @test result isa Expr
                 end
             end
@@ -301,7 +323,8 @@ using TimeZones
             # May be nothing if Pkg registry doesn't exist
             if !isnothing(path)
                 @test isdir(path)
-                @test endswith(path, "General")
+                # Path should end with the current registry name
+                @test endswith(path, PkgVersionHistory.get_registry_name())
                 # Should be in some depot path
                 @test any(depot -> startswith(path, depot), DEPOT_PATH)
             end
