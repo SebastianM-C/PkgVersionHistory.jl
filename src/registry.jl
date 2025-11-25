@@ -2,11 +2,12 @@
 
 using Git
 using Dates: DateTime, Second
+using TOML
 
 """
     get_registry_path()
 
-Get the path to the local clone of the General registry.
+Get the path to the local clone of the configured registry.
 If it doesn't exist, clone it.
 
 Uses Scratch.jl to manage the cache directory, which provides:
@@ -15,30 +16,39 @@ Uses Scratch.jl to manage the cache directory, which provides:
 - Integration with Julia's package system
 """
 function get_registry_path()
+    # Get the current registry configuration
+    registry_name = get_registry_name()
+    registry_url = get_registry_url()
+
+    # Ensure we have a valid URL
+    if isnothing(registry_url)
+        error("No URL found for registry '$registry_name'. Please ensure the registry is properly configured.")
+    end
+
     # Use Scratch.jl to get a persistent cache directory for this package
-    # The registry will be stored in a scratch space named "General"
-    scratch_dir = @get_scratch!("General")
+    # The registry will be stored in a scratch space named after the registry
+    scratch_dir = @get_scratch!(registry_name)
     registry_path = scratch_dir
 
     # Check if the registry is already cloned
     # A bare repo will have a "config" file in the root
     if !isfile(joinpath(registry_path, "config"))
-        @info "Cloning General registry to scratch space..."
+        @info "Cloning $registry_name registry to scratch space..."
         @info "Location: $registry_path"
 
         # Remove any partial/corrupted clone
         if isdir(registry_path)
             rm(registry_path; recursive=true, force=true)
-            scratch_dir = @get_scratch!("General")
+            scratch_dir = @get_scratch!(registry_name)
             registry_path = scratch_dir
         end
 
         # Clone as a bare repository (no working tree, saves space)
         try
-            run(git(["clone", "--bare", "https://github.com/JuliaRegistries/General.git", registry_path]))
+            run(git(["clone", "--bare", registry_url, registry_path]))
             @info "Registry cloned successfully"
         catch e
-            @error "Failed to clone General registry" exception=(e, catch_backtrace())
+            @error "Failed to clone $registry_name registry" exception=(e, catch_backtrace())
             rethrow()
         end
     end
@@ -47,17 +57,17 @@ function get_registry_path()
 end
 
 """
-    get_pkg_registry_tarball()
+    get_pkg_registry_tarball(name::String=get_registry_name())
 
-Find the path to Pkg's General registry tarball.
+Find the path to Pkg's registry tarball for the given registry name.
 Returns `nothing` if not found.
 
 Pkg stores registries as tarballs (e.g., General.tar.gz), not as extracted directories.
 """
-function get_pkg_registry_tarball()
+function get_pkg_registry_tarball(name::String=get_registry_name())
     # Pkg's registries are stored as tarballs in DEPOT_PATH[i]/registries/
     for depot in DEPOT_PATH
-        tarball_path = joinpath(depot, "registries", "General.tar.gz")
+        tarball_path = joinpath(depot, "registries", "$name.tar.gz")
         if isfile(tarball_path)
             return tarball_path
         end
@@ -66,19 +76,19 @@ function get_pkg_registry_tarball()
 end
 
 """
-    get_pkg_registry_path()
+    get_pkg_registry_path(name::String=get_registry_name())
 
-Find the path to Pkg's General registry.
+Find the path to Pkg's registry directory for the given registry name.
 Returns `nothing` if not found.
 
 This function is kept for backward compatibility with get_pkg_latest_version,
 which needs to read Versions.toml files directly.
 """
-function get_pkg_registry_path()
-    # Pkg's registries are stored in DEPOT_PATH[1]/registries/General
+function get_pkg_registry_path(name::String=get_registry_name())
+    # Pkg's registries are stored in DEPOT_PATH[i]/registries/<name>
     # Check if an extracted directory exists (older Pkg versions or extracted manually)
     for depot in DEPOT_PATH
-        registry_path = joinpath(depot, "registries", "General")
+        registry_path = joinpath(depot, "registries", name)
         if isdir(registry_path)
             return registry_path
         end
@@ -132,6 +142,9 @@ end
 Check if our cached registry should be updated by comparing with Pkg's registry.
 Returns true if our cache is older than Pkg's registry.
 
+This comparison works with any registry configured via `set_registry!`, as long
+as the registry is also available in Pkg's depot.
+
 Supports both modern Pkg (using compressed tarball) and older Pkg versions
 (using unpacked directory).
 """
@@ -182,7 +195,7 @@ end
 """
     update_registry!()
 
-Update the local clone of the General registry.
+Update the local clone of the currently configured registry.
 In a bare repository, we need to both fetch and update the branch reference.
 """
 function update_registry!()
@@ -249,31 +262,25 @@ function get_pkg_latest_version(package_name::String)
     end
 
     # Construct path to the package's Versions.toml in Pkg's registry
-    # Note that git expects `/` always
     first_letter = uppercase(string(first(package_name)))
-    versions_file = "$pkg_registry/$first_letter/$package_name/Versions.toml"
+    versions_file = joinpath(pkg_registry, first_letter, package_name, "Versions.toml")
 
     if !isfile(versions_file)
         return nothing
     end
 
     try
-        # Read and parse the Versions.toml file
+        # Read and parse the Versions.toml file using TOML
+        versions_dict = TOML.parsefile(versions_file)
 
-        # Extract all version numbers
-        versions = String[]
-        for line in eachline(versions_file)
-            m = match(r"^\[\"(.+?)\"\]", line)
-            if !isnothing(m)
-                push!(versions, m.captures[1])
-            end
-        end
-
-        if isempty(versions)
+        if isempty(versions_dict)
             return nothing
         end
 
-        # Return the last version (assuming they're in order)
+        # Get all versions and sort them
+        versions = sort!(collect(keys(versions_dict)), by=VersionNumber)
+
+        # Return the latest version
         return last(versions)
     catch
         return nothing

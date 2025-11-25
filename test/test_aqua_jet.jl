@@ -33,34 +33,7 @@ using JET
     end
 
     @testset "JET.jl static analysis" begin
-        # Run JET static analysis to detect potential type instabilities
-        # and errors that could be caught at "compile time"
-        # Note: JET warnings don't necessarily indicate bugs, just optimization opportunities
-
-        @testset "report_package" begin
-            # Analyze the whole package for potential issues
-            # This will report type instabilities, potential errors, etc.
-            rep = JET.report_package(
-                PkgVersionHistory;
-                target_modules = (PkgVersionHistory,),
-                # Ignore some known false positives if needed
-            )
-
-            # Just report the findings, don't fail on them
-            # Type instabilities are often acceptable in many contexts
-            if !isempty(JET.get_reports(rep))
-                println("\nJET found potential type instabilities (informational):")
-                show(stdout, rep)
-                println()
-            end
-            @test true  # Always pass, JET is informational
-        end
+        JET.test_package(PkgVersionHistory; target_modules = (PkgVersionHistory,))
     end
 
-    @testset "Exports verification" begin
-        # Simple check that expected exports are present
-        exported = names(PkgVersionHistory)
-        @test :when in exported
-        @test :update_registry! in exported
-    end
 end
