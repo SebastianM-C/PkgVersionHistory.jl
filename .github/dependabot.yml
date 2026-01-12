@@ -1,5 +1,15 @@
 version: 2
 updates:
+  # Julia package dependencies
+  - package-ecosystem: "julia"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "julia"
+
+  # GitHub Actions dependencies
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
