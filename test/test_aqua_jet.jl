@@ -32,8 +32,12 @@ using JET
         Aqua.test_ambiguities(PkgVersionHistory)
     end
 
-    @testset "JET.jl static analysis" begin
-        JET.test_package(PkgVersionHistory; target_modules = (PkgVersionHistory,))
+    if isempty(VERSION.prerelease)
+        @testset "JET.jl static analysis" begin
+            JET.test_package(PkgVersionHistory; target_modules = (PkgVersionHistory,))
+        end
+    else
+        @info "Skipping JET tests on Julia pre-release version $(VERSION)"
     end
 
 end
