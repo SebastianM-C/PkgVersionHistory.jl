@@ -131,7 +131,7 @@ using Dates
 
         @testset "Very long package names" begin
             # Test with a very long package name
-            long_name = "VeryLongPackageName" * "Extended" ^ 10
+            long_name = "VeryLongPackageName" * "Extended"^10
             parts = split("$long_name@1.0.0", '@')
             @test parts[1] == long_name
         end
