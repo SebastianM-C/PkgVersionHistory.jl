@@ -4,7 +4,6 @@
 using PkgVersionHistory
 using Test
 using Dates
-using TimeZones
 
 @testset "Unit Tests with Mocked Data" begin
 
@@ -63,31 +62,10 @@ using TimeZones
             end
         end
 
-        @testset "Registry subcommands" begin
-            # registry refresh
-            result = PkgVersionHistory.parse_when_command("registry refresh")
+        @testset "Refresh command" begin
+            result = PkgVersionHistory.parse_when_command("refresh")
             @test result isa Expr
-            @test occursin("execute_registry_command", string(result))
-
-            # registry show
-            result = PkgVersionHistory.parse_when_command("registry show")
-            @test result isa Expr
-            @test occursin("execute_registry_command", string(result))
-
-            # registry list
-            result = PkgVersionHistory.parse_when_command("registry list")
-            @test result isa Expr
-            @test occursin("execute_registry_command", string(result))
-
-            # registry use
-            result = PkgVersionHistory.parse_when_command("registry use General")
-            @test result isa Expr
-            @test occursin("execute_registry_command", string(result))
-
-            # registry without subcommand shows help
-            result = PkgVersionHistory.parse_when_command("registry")
-            @test result isa Expr
-            @test occursin("show_registry_help", string(result))
+            @test occursin("execute_cache_refresh", string(result))
         end
 
         @testset "Invalid commands" begin
@@ -95,7 +73,7 @@ using TimeZones
                 "invalid",
                 "unknown",
                 "abc123",
-                "refresh",  # refresh is no longer top-level (use registry refresh)
+                "registry",  # registry commands removed
                 "when",  # when without package
             ]
 
@@ -199,8 +177,7 @@ using TimeZones
     # TIME FORMATTING - Comprehensive edge cases
     # ========================================================================
     @testset "Time Formatting - Comprehensive" begin
-        using TimeZones
-        now_time = now(UTC)
+        now_time = Dates.now(Dates.UTC)
 
         test_cases = [
             (Second(0), "0 seconds ago"),
@@ -302,6 +279,38 @@ using TimeZones
     end
 
     # ========================================================================
+    # VERSION RESOLUTION - With mocked data
+    # ========================================================================
+    @testset "Version Resolution" begin
+        mock_data = Dict(
+            "1.0.0" => Dict{String,Any}("registered" => "2023-01-01T00:00:00"),
+            "1.0.1" => Dict{String,Any}("registered" => "2023-02-01T00:00:00"),
+            "1.1.0" => Dict{String,Any}("registered" => "2023-03-01T00:00:00"),
+            "1.2.0" => Dict{String,Any}("registered" => "2023-04-01T00:00:00", "yanked" => "2023-05-01T00:00:00"),
+            "2.0.0" => Dict{String,Any}("registered" => "2023-06-01T00:00:00"),
+        )
+
+        @testset "Exact version" begin
+            @test PkgVersionHistory.resolve_version(mock_data, "1.0.0") == "1.0.0"
+            @test PkgVersionHistory.resolve_version(mock_data, "2.0.0") == "2.0.0"
+        end
+
+        @testset "Exact yanked version is still returned" begin
+            @test PkgVersionHistory.resolve_version(mock_data, "1.2.0") == "1.2.0"
+        end
+
+        @testset "Partial version resolves to first non-yanked match" begin
+            @test PkgVersionHistory.resolve_version(mock_data, "1.0") == "1.0.0"
+            @test PkgVersionHistory.resolve_version(mock_data, "1.1") == "1.1.0"
+        end
+
+        @testset "Nonexistent version errors" begin
+            @test_throws Exception PkgVersionHistory.resolve_version(mock_data, "3.0.0")
+            @test_throws Exception PkgVersionHistory.resolve_version(mock_data, "1.3")
+        end
+    end
+
+    # ========================================================================
     # GH COMMAND SELECTION
     # ========================================================================
     @testset "GH Command Selection" begin
@@ -311,28 +320,6 @@ using TimeZones
             # Should be either system gh or JLL gh
             cmd_string = string(cmd)
             @test occursin("gh", cmd_string)
-        end
-    end
-
-    # ========================================================================
-    # REGISTRY PATH MANAGEMENT
-    # ========================================================================
-    @testset "Registry Path Management" begin
-        @testset "get_pkg_registry_path logic" begin
-            path = PkgVersionHistory.get_pkg_registry_path()
-            # May be nothing if Pkg registry doesn't exist
-            if !isnothing(path)
-                @test isdir(path)
-                # Path should end with the current registry name
-                @test endswith(path, PkgVersionHistory.get_registry_name())
-                # Should be in some depot path
-                @test any(depot -> startswith(path, depot), DEPOT_PATH)
-            end
-        end
-
-        @testset "should_update_registry returns bool" begin
-            result = PkgVersionHistory.should_update_registry()
-            @test result isa Bool
         end
     end
 
