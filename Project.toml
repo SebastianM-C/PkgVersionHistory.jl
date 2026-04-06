@@ -5,25 +5,29 @@ authors = ["Sebastian Micluța-Câmpeanu <sebastian.mc95@proton.me>", "Claude <n
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
-Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
+Git = "d7ba0133-e1db-5d97-8f8c-041e4b3a1eb2"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 ReplMaker = "b873ce64-0db9-51f5-a568-4457d8e49576"
+Scratch = "6c6a2e73-6563-6170-7368-637461726353"
+TimeZones = "f269a46b-ccf7-5d73-abea-4c690281aa53"
 gh_cli_jll = "5d31d589-30fb-542f-b82d-10325e863e38"
 
 [compat]
 Aqua = "0.8"
 Dates = "1"
-Downloads = "1"
+Git = "1.5.0"
 JET = "0.9, 0.10, 0.11"
 JSON = "0.21, 1"
 Pkg = "1"
 TOML = "1"
 REPL = "1"
 ReplMaker = "0.2"
+Scratch = "1"
 Test = "1"
+TimeZones = "1"
 gh_cli_jll = "2"
 julia = "1.10"
 
