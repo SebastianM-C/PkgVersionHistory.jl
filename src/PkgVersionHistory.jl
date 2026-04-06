@@ -4,19 +4,61 @@ using Dates
 using JSON
 using Pkg
 using Pkg.Registry: reachable_registries, RegistryInstance
+using Preferences
 using ReplMaker
 using Scratch
 using TimeZones
 using TOML
 using gh_cli_jll
 
-export when, update_registry!, check_pending_prs, set_registry!, get_registry_url, list_registries
+export when, update_registry!, update_cache!, check_pending_prs
+export set_registry!, get_registry_url, list_registries
+export set_backend!, get_backend
 
 # Default registry configuration
 const DEFAULT_REGISTRY_NAME = "General"
 
 # Current registry configuration (mutable)
 const REGISTRY_CONFIG = Ref{@NamedTuple{name::String, url::Union{String, Nothing}}}((name=DEFAULT_REGISTRY_NAME, url=nothing))
+
+# Backend preference: "git" (default) or "api"
+const BACKEND = Ref{Symbol}(:git)
+
+"""
+    get_backend() -> Symbol
+
+Get the currently active backend (`:git` or `:api`).
+"""
+get_backend() = BACKEND[]
+
+"""
+    set_backend!(backend::Union{String, Symbol})
+
+Set the backend for version queries. Valid values: `:git` or `:api`.
+
+- `:git` (default) — queries the General registry git history directly via a local
+  clone managed by Scratch.jl (~400 MB). Provides fresh data immediately.
+- `:api` — queries the GeneralMetadata.jl web API. No disk space needed, but data
+  may be up to ~24 hours stale (the API updates daily around midnight UTC).
+
+The preference is saved persistently in `LocalPreferences.toml`.
+
+# Examples
+```julia
+set_backend!(:api)   # switch to lightweight API backend
+set_backend!(:git)   # switch back to git backend
+```
+"""
+function set_backend!(backend::Union{String, Symbol})
+    b = Symbol(backend)
+    if b ∉ (:git, :api)
+        error("Invalid backend '$backend'. Must be :git or :api")
+    end
+    BACKEND[] = b
+    @set_preferences!("backend" => string(b))
+    @info "Backend set to :$b (saved to LocalPreferences.toml)"
+    return nothing
+end
 
 """
     list_registries() -> Vector{@NamedTuple{name::String, url::Union{String, Nothing}}}
@@ -106,11 +148,16 @@ end
 
 include("registry.jl")
 include("core.jl")
+include("api.jl")
 include("format.jl")
 include("repl.jl")
 include("gh.jl")
 
 function __init__()
+    # Load backend preference
+    backend = @load_preference("backend", "git")
+    BACKEND[] = Symbol(backend)
+
     # Initialize REPL mode when running interactively
     if isinteractive()
         # Check if REPL is already active

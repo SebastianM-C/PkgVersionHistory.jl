@@ -17,9 +17,11 @@ Pkg.add(url="https://github.com/SebastianM-C/PkgVersionHistory.jl")
 ## Features
 
 - **Check registration timestamps**: Find out when a specific package version was registered
-- **Multiple registries**: Query any registry in your Pkg depot (General, private registries, etc.)
+- **Two backends**: Git-based (default, fresh data) or web API (lightweight, no disk space)
+- **Multiple registries**: Query any registry in your Pkg depot (git backend)
 - **REPL integration**: Use the convenient `when` command in a custom REPL mode (`}`)
 - **Multiple packages**: Query multiple packages at once
+- **Yanked version detection**: Identify yanked versions with clear `[YANKED]` markers
 - **Pending PRs**: Automatically check for open registration PRs when querying latest versions
 - **Local registry status**: Compare with your local Pkg registry and get notified when it's behind
 - **Automatic updates**: Registry cache automatically stays in sync with your Pkg registry
@@ -44,11 +46,17 @@ when> when Example@0.5      # Resolves to 0.5.0 automatically
 # Check multiple packages
 when> when JSON DataFrames HTTP
 
-# Registry management
+# Refresh data (update registry or clear API cache)
+when> refresh
+
+# Switch backend
+when> backend api            # lightweight, no disk space
+when> backend git            # fresh data (default)
+
+# Registry management (git backend)
 when> registry show         # Show current registry
 when> registry list         # List available registries
 when> registry use General  # Switch to a different registry
-when> registry refresh      # Update the registry cache
 
 # Get help
 when> help
@@ -64,9 +72,10 @@ when> when Example@0      # Resolves to first 0.x.x version
 ```
 
 **Yanked Versions:** The package handles yanked versions intelligently:
-- Partial version resolution skips yanked versions
-- Exact yanked versions can still be queried
-- Yanked status is indicated with `[YANKED]` in the output
+- Partial version resolution (e.g., `@1.9`) skips yanked versions automatically
+- Exact yanked versions (e.g., `@1.9.0`) can still be queried and show the registration time
+- Yanked status is clearly indicated with `[YANKED]` in the output
+- Yanked versions are distinguishable from non-existent versions: a non-existent version gives an error, while a yanked exact version returns its registration time with the `[YANKED]` marker
 
 **Pending PRs:** When you check the latest version of a package (without specifying a version), the package automatically checks for pending pull requests in the Julia General registry. This helps you see if there's a newer version being registered.
 
@@ -109,74 +118,82 @@ timestamp = when(spec)
 
 The programmatic API returns a `DateTime` object (not formatted), which you can use for further processing.
 
-## How It Works
+## Backends
 
-The package works by:
+The package supports two backends for fetching version metadata, selectable via [Preferences.jl](https://github.com/JuliaPackaging/Preferences.jl):
 
-1. Cloning a bare copy of the configured registry to a scratch space
-2. Using git to query the commit history for when specific package versions were added
-3. Parsing the commit timestamps to provide registration times
+### Git Backend (default)
 
-The registry is cloned only once and stored in a [Scratch.jl](https://github.com/JuliaPackaging/Scratch.jl) managed directory:
+The default backend clones the General registry as a bare git repository and queries commit history directly using `git log -S`. This provides **fresh data immediately** — no lag.
+
+**How it works:**
+1. Clones a bare copy of the registry to a [Scratch.jl](https://github.com/JuliaPackaging/Scratch.jl) managed directory
+2. Uses `git log -S` to find the commit that introduced each version entry
+3. Automatically stays in sync with your local Pkg registry
+
+**Storage location:**
 ```
 ~/.julia/scratchspaces/<package-uuid>/<registry-name>/
 ```
 
-By default, it uses the [General registry](https://github.com/JuliaRegistries/General), but you can switch to any registry available in your Pkg depot.
+**Trade-offs:**
+- ✅ Fresh data — no lag behind the registry
+- ✅ Supports multiple registries
+- ❌ ~400 MB disk space for the General registry (one-time)
+- ❌ Requires Git
 
-**Benefits of using Scratch.jl:**
-- Automatic cleanup when the package is removed
-- Standardized cache location management
-- Integration with Julia's package system
-- Can be garbage collected with `Pkg.gc()`
+### API Backend
 
-### Updating the Registry
+A lightweight alternative that fetches version metadata from the [GeneralMetadata.jl](https://github.com/JuliaRegistries/GeneralMetadata.jl) web API, a static JSON API hosted on GitHub Pages.
 
-The package automatically checks if your cached registry is older than Pkg's registry and updates it if needed. This happens:
-- When you use the `when` command in REPL mode
-- When you call the programmatic API
+**How it works:**
+1. Queries `https://juliaregistries.github.io/GeneralMetadata.jl/api/<package>/versions.json`
+2. Parses registration timestamps and yanked status from the JSON response
+3. Caches responses in-session for fast repeated queries
 
-You can also manually update the registry:
+**Trade-offs:**
+- ✅ No disk space needed
+- ✅ No Git dependency
+- ✅ Fast queries (small JSON downloads)
+- ❌ Data updates once per day (~midnight UTC) — recently registered versions may take up to 24 hours to appear
+- ❌ General registry only (no custom registries)
+
+### Switching Backends
 
 **In REPL mode:**
 ```julia-repl
-when> registry refresh
+when> backend api    # switch to API backend
+when> backend git    # switch back to git backend
+when> backend        # show current backend
 ```
 
 **Programmatically:**
 ```julia
 using PkgVersionHistory
+
+set_backend!(:api)   # lightweight, no disk space
+set_backend!(:git)   # fresh data (default)
+get_backend()        # check current backend
+```
+
+The preference is saved persistently in `LocalPreferences.toml`, so it survives Julia restarts.
+
+## Refreshing Data
+
+**In REPL mode:**
+```julia-repl
+when> refresh                 # updates git registry or clears API cache
+when> registry refresh        # force-update git registry cache
+```
+
+**Programmatically:**
+```julia
+# Git backend
 update_registry!()
+
+# API backend
+update_cache!()
 ```
-
-The registry is compared with Pkg's registry to ensure you have the latest data that Pkg knows about.
-
-### Switching Registries
-
-You can query packages from any registry in your Pkg depot:
-
-**In REPL mode:**
-```julia-repl
-when> registry list           # See available registries
-when> registry use MyRegistry # Switch to a different registry
-when> registry show           # Show current registry
-```
-
-**Programmatically:**
-```julia
-using PkgVersionHistory
-
-# List all available registries
-list_registries()
-
-# Switch to a different registry
-set_registry!("MyRegistry")
-
-# Get current registry URL
-get_registry_url()
-```
-
-**Note:** Only registries already added to Pkg can be used. To add a new registry, use `]registry add <url>` in Pkg mode first.
 
 ## Checking Pending PRs
 
@@ -191,23 +208,40 @@ MyPackage@1.2.3 registered 2 weeks ago (2024-10-14 10:30:00)
     by @author, opened 2 days ago [AutoMerge]
 ```
 
-This shows any open PRs for the package, including their AutoMerge status.
+This shows any open PRs for the package, including their AutoMerge status. The GitHub CLI (`gh`) is provided automatically via the `gh_cli_jll` dependency.
 
-**Requirements for pending PR checks:**
-- GitHub CLI (`gh`) must be installed: https://cli.github.com/
-- Alternatively, the `gh_jll` package can provide it
-- If `gh` is not available, pending PR checks are silently skipped
+## Registry Management (Git Backend)
+
+When using the git backend, you can query packages from any registry in your Pkg depot:
+
+**In REPL mode:**
+```julia-repl
+when> registry list           # See available registries
+when> registry use MyRegistry # Switch to a different registry
+when> registry show           # Show current registry
+```
+
+**Programmatically:**
+```julia
+using PkgVersionHistory
+
+list_registries()
+set_registry!("MyRegistry")
+get_registry_url()
+```
+
+**Note:** Only registries already added to Pkg can be used. To add a new registry, use `]registry add <url>` in Pkg mode first.
 
 ## Requirements
 
 - Julia 1.10 or higher
-- Git (for cloning and querying the registry)
-- ~400 MB disk space for the General registry (one-time, in scratch space)
-- GitHub CLI (`gh`) - optional, for checking pending PRs
+- **Git backend:** Git, ~400 MB disk space for the General registry (one-time, in scratch space)
+- **API backend:** Internet access only
+- GitHub CLI (`gh`) — provided automatically via `gh_cli_jll`, used for checking pending PRs
 
 ## Disk Space Management
 
-Registry caches are stored in scratch spaces managed by Scratch.jl. The General registry is about 400 MB.
+Registry caches (git backend) are stored in scratch spaces managed by Scratch.jl. The General registry is about 400 MB.
 
 To clean up scratch spaces across all packages:
 ```julia
@@ -215,11 +249,10 @@ using Pkg
 Pkg.gc()  # Removes scratch spaces from uninstalled packages
 ```
 
-To manually remove a registry cache:
+To switch to the API backend and avoid disk usage entirely:
 ```julia
-using PkgVersionHistory, Scratch
-scratch_dir = @get_scratch!("General")  # or other registry name
-rm(scratch_dir; recursive=true)
+using PkgVersionHistory
+set_backend!(:api)
 ```
 
 ## Related Projects

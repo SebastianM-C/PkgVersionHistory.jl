@@ -77,9 +77,15 @@ end
 
 Internal function to get timestamp for a specific package version.
 Returns a tuple of (timestamp, is_yanked, resolved_version).
+
+Dispatches to either the git or API backend based on the current preference.
 """
 function when_internal(package_name::String, version::Union{String, Nothing})
-    # Ensure registry is up to date (checks against Pkg's registry)
+    if get_backend() == :api
+        return when_internal_api(package_name, version)
+    end
+
+    # Git backend: ensure registry is up to date (checks against Pkg's registry)
     ensure_registry_up_to_date!()
 
     registry_path = get_registry_path()

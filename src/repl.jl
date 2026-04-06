@@ -65,6 +65,14 @@ function parse_when_command(input::String)
         subcommand = String(parts[2])
         args = length(parts) > 2 ? String.(parts[3:end]) : String[]
         return :(PkgVersionHistory.execute_registry_command($subcommand, $args))
+    elseif command == "refresh"
+        return :(PkgVersionHistory.execute_refresh())
+    elseif command == "backend"
+        if length(parts) < 2
+            return :(println("Current backend: $(PkgVersionHistory.get_backend())"))
+        end
+        backend = String(parts[2])
+        return :(PkgVersionHistory.set_backend!($backend))
     else
         return :(println("Unknown command: $command. Type 'help' for usage information."))
     end
@@ -80,19 +88,21 @@ function show_repl_help()
     println("  when <package>              - Check latest version (and pending PRs)")
     println("  when <package>@<version>    - Check specific version registration time")
     println("  when <pkg1> <pkg2> ...      - Check multiple packages")
-    println("  registry show               - Show current registry")
-    println("  registry list               - List available registries")
-    println("  registry use <name>         - Switch to a different registry")
-    println("  registry refresh            - Update the registry cache")
+    println("  refresh                     - Update registry cache / clear API cache")
+    println("  backend                     - Show current backend")
+    println("  backend <git|api>           - Switch backend (saved to LocalPreferences.toml)")
+    println("  registry show               - Show current registry (git backend)")
+    println("  registry list               - List available registries (git backend)")
+    println("  registry use <name>         - Switch to a different registry (git backend)")
     println("  help                        - Show this help message")
     println()
     println("Examples:")
     println("  when> when Example")
     println("  when> when Example@1.2.3")
     println("  when> when JSON DataFrames HTTP")
-    println("  when> registry use General")
+    println("  when> backend api           # switch to lightweight API backend")
     println()
-    println("Note: Registry is automatically updated if older than Pkg's registry.")
+    println("Current backend: $(get_backend())")
     println("Press backspace to return to julia> prompt")
 end
 
@@ -183,6 +193,27 @@ function execute_registry_use(name::String)
     catch e
         printstyled("Error: ", color=:red, bold=true)
         println(sprint(showerror, e))
+    end
+end
+
+"""
+    execute_refresh()
+
+Refresh data: update the git registry cache or clear the API cache,
+depending on the active backend.
+"""
+function execute_refresh()
+    if get_backend() == :api
+        try
+            printstyled("Clearing API metadata cache...\n", color=:cyan)
+            update_cache!()
+            printstyled("Cache cleared successfully!\n", color=:green)
+        catch e
+            printstyled("Error clearing cache: ", color=:red, bold=true)
+            println(sprint(showerror, e))
+        end
+    else
+        execute_registry_refresh()
     end
 end
 
