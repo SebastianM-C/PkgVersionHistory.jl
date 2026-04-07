@@ -22,43 +22,40 @@ using Dates: Day, Hour
     # ========================================================================
     println("\n=== Running integration tests (requires network) ===")
 
+    @testset "Registry operations" begin
+        # Test getting registry path
+        registry_path = PkgVersionHistory.get_registry_path()
+        @test isdir(registry_path)
+
+        # Test finding a known package
+        pkg_path = PkgVersionHistory.get_package_path(registry_path, "Example")
+        @test !isnothing(pkg_path)
+
+        # Test finding a non-existent package
+        pkg_path = PkgVersionHistory.get_package_path(registry_path, "NonExistentPackageXYZ123")
+        @test isnothing(pkg_path)
+    end
+
     @testset "Version queries" begin
+        # Test getting latest version of a known package
+        version = PkgVersionHistory.get_latest_version("Example")
+        @test !isempty(version)
+        @test occursin(r"^\d+\.\d+\.\d+", version)
+
         # Test when function with package name only
         timestamp = when("Example")
         @test timestamp isa DateTime
-        @test timestamp < Dates.now(Dates.UTC)  # Should be in the past
+        @test timestamp < now()  # Should be in the past
 
         # Test when function with specific version (Example 0.5.0 is a known version)
         timestamp = when("Example@0.5.0")
         @test timestamp isa DateTime
-        @test timestamp < Dates.now(Dates.UTC)
-    end
-
-    @testset "API data structure" begin
-        # Test that fetch_package_versions returns expected structure
-        data = PkgVersionHistory.fetch_package_versions("Example")
-        @test data isa Dict
-        @test !isempty(data)
-        @test haskey(data, "0.5.4")
-
-        # Each version should have a "registered" field
-        for (v, info) in data
-            @test haskey(info, "registered")
-        end
-    end
-
-    @testset "Session cache" begin
-        # After the queries above, Example should be cached
-        @test haskey(PkgVersionHistory.VERSION_CACHE, "Example")
-
-        # Clear cache
-        PkgVersionHistory.update_cache!()
-        @test isempty(PkgVersionHistory.VERSION_CACHE)
+        @test timestamp < now()
     end
 
     @testset "Time formatting" begin
         # Test relative time formatting
-        now_time = Dates.now(Dates.UTC)
+        now_time = now()
 
         # 2 days ago
         dt = now_time - Day(2)

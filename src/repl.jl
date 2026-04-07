@@ -57,8 +57,22 @@ function parse_when_command(input::String)
         end
         package_specs = join(parts[2:end], " ")
         return :(PkgVersionHistory.execute_when_command($package_specs))
+    elseif command == "registry"
+        # Handle registry subcommands
+        if length(parts) < 2
+            return :(PkgVersionHistory.show_registry_help())
+        end
+        subcommand = String(parts[2])
+        args = length(parts) > 2 ? String.(parts[3:end]) : String[]
+        return :(PkgVersionHistory.execute_registry_command($subcommand, $args))
     elseif command == "refresh"
-        return :(PkgVersionHistory.execute_cache_refresh())
+        return :(PkgVersionHistory.execute_refresh())
+    elseif command == "backend"
+        if length(parts) < 2
+            return :(println("Current backend: $(PkgVersionHistory.get_backend())"))
+        end
+        backend = String(parts[2])
+        return :(PkgVersionHistory.set_backend!($backend))
     else
         return :(println("Unknown command: $command. Type 'help' for usage information."))
     end
@@ -74,30 +88,148 @@ function show_repl_help()
     println("  when <package>              - Check latest version (and pending PRs)")
     println("  when <package>@<version>    - Check specific version registration time")
     println("  when <pkg1> <pkg2> ...      - Check multiple packages")
-    println("  refresh                     - Clear cached metadata")
+    println("  refresh                     - Update registry cache / clear API cache")
+    println("  backend                     - Show current backend")
+    println("  backend <git|api>           - Switch backend (saved to LocalPreferences.toml)")
+    println("  registry show               - Show current registry (git backend)")
+    println("  registry list               - List available registries (git backend)")
+    println("  registry use <name>         - Switch to a different registry (git backend)")
     println("  help                        - Show this help message")
     println()
     println("Examples:")
     println("  when> when Example")
     println("  when> when Example@1.2.3")
     println("  when> when JSON DataFrames HTTP")
+    println("  when> backend api           # switch to lightweight API backend")
     println()
-    println("Data source: GeneralMetadata.jl API (General registry only)")
+    println("Current backend: $(get_backend())")
     println("Press backspace to return to julia> prompt")
 end
 
 """
-    execute_cache_refresh()
+    show_registry_help()
 
-Clear the metadata cache.
+Show help for registry subcommands.
 """
-function execute_cache_refresh()
+function show_registry_help()
+    println("Registry subcommands:")
+    println("  registry show               - Show current registry")
+    println("  registry list               - List available registries")
+    println("  registry use <name>         - Switch to a different registry")
+    println("  registry refresh            - Update the registry cache")
+end
+
+"""
+    execute_registry_command(subcommand::String, args::Vector{String})
+
+Execute a registry subcommand.
+"""
+function execute_registry_command(subcommand::String, args::Vector{String})
+    if subcommand == "show"
+        execute_registry_show()
+    elseif subcommand == "list"
+        execute_registry_list()
+    elseif subcommand == "use"
+        if isempty(args)
+            println("Usage: registry use <name>")
+            println("Use 'registry list' to see available registries.")
+        else
+            execute_registry_use(args[1])
+        end
+    elseif subcommand == "refresh"
+        execute_registry_refresh()
+    else
+        println("Unknown registry subcommand: $subcommand")
+        show_registry_help()
+    end
+end
+
+"""
+    execute_registry_show()
+
+Show the current registry configuration.
+"""
+function execute_registry_show()
+    name = get_registry_name()
+    url = get_registry_url()
+    println("Current registry: $name")
+    if !isnothing(url)
+        println("  URL: $url")
+    end
+end
+
+"""
+    execute_registry_list()
+
+List all available registries.
+"""
+function execute_registry_list()
+    current = get_registry_name()
+    regs = list_registries()
+
+    println("Available registries:")
+    for reg in regs
+        marker = reg.name == current ? " *" : "  "
+        printstyled(marker, color = reg.name == current ? :green : :default)
+        println(" $(reg.name)")
+        if !isnothing(reg.url)
+            println("     $(reg.url)")
+        end
+    end
+    println()
+    printstyled(" * ", color=:green)
+    println("= current registry")
+end
+
+"""
+    execute_registry_use(name::String)
+
+Switch to a different registry.
+"""
+function execute_registry_use(name::String)
     try
-        printstyled("Clearing metadata cache...\n", color=:cyan)
-        update_cache!()
-        printstyled("Cache cleared successfully!\n", color=:green)
+        set_registry!(name)
+        printstyled("Switched to registry: $name\n", color=:green)
     catch e
-        printstyled("Error clearing cache: ", color=:red, bold=true)
+        printstyled("Error: ", color=:red, bold=true)
+        println(sprint(showerror, e))
+    end
+end
+
+"""
+    execute_refresh()
+
+Refresh data: update the git registry cache or clear the API cache,
+depending on the active backend.
+"""
+function execute_refresh()
+    if get_backend() == :api
+        try
+            printstyled("Clearing API metadata cache...\n", color=:cyan)
+            update_cache!()
+            printstyled("Cache cleared successfully!\n", color=:green)
+        catch e
+            printstyled("Error clearing cache: ", color=:red, bold=true)
+            println(sprint(showerror, e))
+        end
+    else
+        execute_registry_refresh()
+    end
+end
+
+"""
+    execute_registry_refresh()
+
+Update the registry cache.
+"""
+function execute_registry_refresh()
+    try
+        name = get_registry_name()
+        printstyled("Updating $name registry cache...\n", color=:cyan)
+        update_registry!()
+        printstyled("Registry updated successfully!\n", color=:green)
+    catch e
+        printstyled("Error updating registry: ", color=:red, bold=true)
         println(sprint(showerror, e))
     end
 end
@@ -117,6 +249,7 @@ function execute_when_command(line::String)
     end
 
     # Process each package
+    # Note: ensure_registry_up_to_date!() is called in when_internal()
     for pkg_spec in parts
         execute_when_for_package(pkg_spec)
     end
@@ -190,3 +323,4 @@ function execute_when_for_package(pkg_spec::String)
         println(sprint(showerror, e))
     end
 end
+

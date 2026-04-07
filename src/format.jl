@@ -1,5 +1,6 @@
 # Formatting utilities for human-readable output
 
+using TimeZones: UTC
 using Dates
 
 """
@@ -15,7 +16,7 @@ format_relative_time(now(UTC) - Hour(3))  # "3 hours ago"
 ```
 """
 function format_relative_time(dt::DateTime)
-    now_time = Dates.now(Dates.UTC)
+    now_time = now(UTC)
     diff = now_time - dt
 
     # Convert to various time units

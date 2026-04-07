@@ -1,36 +1,8 @@
 # Core functionality for querying package version timestamps
-# Uses GeneralMetadata.jl's web API for registration timestamps
 
-"""
-    fetch_package_versions(package_name::String) -> Dict{String, Any}
-
-Fetch version metadata for a package from the GeneralMetadata API.
-Returns a Dict mapping version strings to metadata dicts containing
-`registered` (DateTime string) and optionally `yanked` (DateTime string).
-
-Results are cached in-session to avoid redundant API calls.
-"""
-function fetch_package_versions(package_name::String)
-    # Check session cache
-    if haskey(VERSION_CACHE, package_name)
-        return VERSION_CACHE[package_name]
-    end
-
-    url = "$API_BASE/$package_name/versions.json"
-    buf = IOBuffer()
-    try
-        Downloads.download(url, buf)
-    catch e
-        if e isa Downloads.RequestError && e.response.status == 404
-            error("Package '$package_name' not found in General registry")
-        end
-        rethrow()
-    end
-
-    data = JSON.parse(String(take!(buf)))
-    VERSION_CACHE[package_name] = data
-    return data
-end
+using Git
+using Dates: DateTime, Second
+using TOML
 
 """
     when(package_spec::String) -> DateTime
@@ -47,11 +19,19 @@ Get the timestamp when a package version was registered.
 ```julia
 when("Example")  # Latest version
 when("Example@1.2.3")  # Specific version
+
+# Check for pending registry PRs programmatically
+prs = check_pending_prs("Example")
+if !isnothing(prs)
+    for pr in prs
+        println("PR #\$(pr["number"]): \$(pr["title"])")
+    end
+end
 ```
 
 # See also
 - [`check_pending_prs`](@ref): Check for pending PRs for a package in the General registry
-- [`update_cache!`](@ref): Clear the local metadata cache
+- [`update_registry!`](@ref): Manually update the local registry cache
 """
 function when(package_spec::String)
     # Parse package name and version
@@ -84,10 +64,11 @@ function when(package_spec::Pkg.Types.PackageSpec)
     end
 
     if isnothing(version)
-        timestamp, _, _ = when_internal(pkg_name, nothing)
-    else
-        timestamp, _, _ = when_internal(pkg_name, string(version))
+        # Get latest version from registry
+        version = get_latest_version(pkg_name)
     end
+
+    timestamp, _ = when_internal(pkg_name, string(version))
     return timestamp
 end
 
@@ -96,56 +77,150 @@ end
 
 Internal function to get timestamp for a specific package version.
 Returns a tuple of (timestamp, is_yanked, resolved_version).
+
+Dispatches to either the git or API backend based on the current preference.
 """
 function when_internal(package_name::String, version::Union{String, Nothing})
-    data = fetch_package_versions(package_name)
-
-    if isempty(data)
-        error("No versions found for package '$package_name'")
+    if get_backend() == :api
+        return when_internal_api(package_name, version)
     end
 
-    all_versions = sort!(collect(keys(data)), by=VersionNumber)
+    # Git backend: ensure registry is up to date (checks against Pkg's registry)
+    ensure_registry_up_to_date!()
 
+    registry_path = get_registry_path()
+    pkg_path = get_package_path(registry_path, package_name)
+
+    if isnothing(pkg_path)
+        error("Package '$package_name' not found in General registry")
+    end
+
+    versions_file = "$(pkg_path)/Versions.toml"
+
+    # If no version specified, get the latest
     if isnothing(version)
-        # Get the latest version
-        version = last(all_versions)
+        version = get_latest_version_from_file(registry_path, versions_file)
     else
-        # Resolve partial versions
-        version = resolve_version(data, version)
+        # Resolve partial versions (e.g., "1.9" -> "1.9.0")
+        version = resolve_version(registry_path, versions_file, version)
     end
 
-    if !haskey(data, version)
-        error("Version $version not found for package '$package_name'")
-    end
+    # Check if version is yanked
+    yanked = is_version_yanked(registry_path, versions_file, version)
 
-    version_data = data[version]
-
-    # Parse the registered timestamp
-    registered = version_data["registered"]
-    timestamp = if registered isa DateTime
-        registered
-    else
-        DateTime(string(registered), dateformat"yyyy-mm-ddTHH:MM:SS")
-    end
-
-    # Check if yanked (presence of "yanked" key indicates yanked)
-    yanked = haskey(version_data, "yanked")
+    # Find the commit that added or last modified this version entry
+    timestamp = get_version_timestamp(registry_path, versions_file, version)
 
     return (timestamp, yanked, version)
 end
 
 """
-    resolve_version(data::Dict, partial_version::String) -> String
+    get_latest_version(package_name::String) -> String
 
-Resolve a partial version to a full version string.
+Get the latest version of a package from the registry.
+"""
+function get_latest_version(package_name::String)
+    registry_path = get_registry_path()
+    pkg_path = get_package_path(registry_path, package_name)
+
+    if isnothing(pkg_path)
+        error("Package '$package_name' not found in General registry")
+    end
+
+    versions_file = "$pkg_path/Versions.toml"
+    return get_latest_version_from_file(registry_path, versions_file)
+end
+
+"""
+    read_file_from_repo(registry_path::String, file_path::String) -> String
+
+Read file content from the Git repository at HEAD.
+"""
+function read_file_from_repo(registry_path::String, file_path::String)
+    # Use git show to read file content from HEAD
+    content = read(git(["-C", registry_path, "show", "HEAD:$file_path"]), String)
+    return content
+end
+
+"""
+    get_all_versions_from_file(registry_path::String, versions_file::String; include_yanked::Bool=true) -> Vector{String}
+
+Get all versions from a Versions.toml file.
+
+# Arguments
+- `registry_path`: Path to the registry
+- `versions_file`: Path to the Versions.toml file (relative to registry)
+- `include_yanked`: Whether to include yanked versions (default: true)
+
+# Returns
+Vector of version strings
+"""
+function get_all_versions_from_file(registry_path::String, versions_file::String; include_yanked::Bool=true)
+    # Get the content of Versions.toml and parse it
+    content = read_file_from_repo(registry_path, versions_file)
+    versions_dict = TOML.parse(content)
+
+    versions = String[]
+    for (version, info) in versions_dict
+        is_yanked = get(info, "yanked", false)
+        if include_yanked || !is_yanked
+            push!(versions, version)
+        end
+    end
+
+    # Sort versions to ensure consistent ordering
+    sort!(versions, by=VersionNumber)
+
+    if isempty(versions)
+        error("No versions found in $versions_file")
+    end
+
+    return versions
+end
+
+"""
+    is_version_yanked(registry_path::String, versions_file::String, version::String) -> Bool
+
+Check if a specific version is yanked.
+"""
+function is_version_yanked(registry_path::String, versions_file::String, version::String)
+    # Get the content of Versions.toml and parse it
+    content = read_file_from_repo(registry_path, versions_file)
+    versions_dict = TOML.parse(content)
+
+    # Check if version exists and has yanked flag
+    if haskey(versions_dict, version)
+        return get(versions_dict[version], "yanked", false)
+    end
+
+    return false
+end
+
+"""
+    get_latest_version_from_file(registry_path::String, versions_file::String) -> String
+
+Extract the latest version from a Versions.toml file.
+"""
+function get_latest_version_from_file(registry_path::String, versions_file::String)
+    versions = get_all_versions_from_file(registry_path, versions_file)
+    # Return the last version (assuming they're in order)
+    return last(versions)
+end
+
+"""
+    resolve_version(registry_path::String, versions_file::String, partial_version::String) -> String
+
+Resolve a partial version to a full version.
+For example, "1.9" might resolve to "1.9.0" or "1.9.1" depending on what exists.
 
 If the exact version exists, return it.
-If it's a partial version (e.g., "1.9"), find the first matching non-yanked version.
+If it's a partial version (e.g., "1.9"), find the first matching non-yanked version that starts with it.
 
 Note: Skips yanked versions when resolving partial versions, but allows exact yanked versions.
 """
-function resolve_version(data::AbstractDict, partial_version::String)
-    all_versions = sort!(collect(keys(data)), by=VersionNumber)
+function resolve_version(registry_path::String, versions_file::String, partial_version::String)
+    # Get all versions including yanked ones
+    all_versions = get_all_versions_from_file(registry_path, versions_file; include_yanked=true)
 
     # First, check if the exact version exists
     if partial_version in all_versions
@@ -153,66 +228,58 @@ function resolve_version(data::AbstractDict, partial_version::String)
     end
 
     # For partial version resolution, skip yanked versions
-    non_yanked = filter(v -> !haskey(data[v], "yanked"), all_versions)
+    non_yanked_versions = get_all_versions_from_file(registry_path, versions_file; include_yanked=false)
 
+    # Try to find a matching version
     # Add a dot to ensure we match version prefixes properly
     # e.g., "1.9" should match "1.9.0" but not "1.90.0"
     search_prefix = partial_version * "."
-    matching = filter(v -> startswith(v, search_prefix), non_yanked)
 
-    if isempty(matching)
-        # Try without the dot
-        matching = filter(v -> startswith(v, partial_version), non_yanked)
+    matching_versions = filter(v -> startswith(v, search_prefix), non_yanked_versions)
+
+    if isempty(matching_versions)
+        # No matches found, maybe they provided a partial without the last component
+        # Try searching without the dot
+        matching_versions = filter(v -> startswith(v, partial_version), non_yanked_versions)
     end
 
-    if isempty(matching)
-        error("Version $partial_version not found for package (or all matching versions are yanked)")
+    if isempty(matching_versions)
+        error("Version $partial_version not found in $versions_file (or all matching versions are yanked)")
     end
 
-    return first(matching)
+    # Return the first matching version (typically the earliest patch version)
+    return first(matching_versions)
 end
 
 """
-    update_cache!()
+    get_version_timestamp(registry_path::String, versions_file::String, version::String) -> DateTime
 
-Clear the in-session metadata cache, so subsequent queries will fetch fresh data from the API.
+Get the timestamp when a specific version was added to the registry.
 """
-function update_cache!()
-    empty!(VERSION_CACHE)
-    @info "Metadata cache cleared. Next query will fetch fresh data from GeneralMetadata API."
-    return nothing
-end
+function get_version_timestamp(registry_path::String, versions_file::String, version::String)
+    # Use git log -S to efficiently find when this version string was added
+    # The -S option (pickaxe) finds commits that introduced or removed the string
+    search_pattern = "[\"$version\"]"
 
-"""
-    get_pkg_latest_version(package_name::String) -> Union{String, Nothing}
+    # Run git log with -S to find commits that added this string
+    # --format=%at outputs the commit timestamp
+    # --reverse shows oldest first
+    try
+        # Use Git.jl to run git log -S to find when the version string was added
+        cmd = git(["-C", registry_path, "log", "-S", search_pattern, "--format=%at", "--reverse", "--", versions_file])
+        output = read(cmd, String)
 
-Get the latest version of a package from Pkg's local registry.
-Returns `nothing` if Pkg registry not found or package not found.
-"""
-function get_pkg_latest_version(package_name::String)
-    for depot in DEPOT_PATH
-        registry_path = joinpath(depot, "registries", "General")
-        if !isdir(registry_path)
-            continue
+        if isempty(strip(output))
+            error("Version $version not found in $versions_file")
         end
 
-        first_letter = uppercase(string(first(package_name)))
-        versions_file = joinpath(registry_path, first_letter, package_name, "Versions.toml")
+        # Get the first timestamp (when the version was added)
+        timestamps = split(strip(output), '\n')
+        timestamp_unix = parse(Int64, timestamps[1])
 
-        if !isfile(versions_file)
-            continue
-        end
-
-        try
-            versions_dict = TOML.parsefile(versions_file)
-            if isempty(versions_dict)
-                continue
-            end
-            versions = sort!(collect(keys(versions_dict)), by=VersionNumber)
-            return last(versions)
-        catch
-            continue
-        end
+        # Convert from Unix timestamp to DateTime
+        return DateTime(1970) + Second(timestamp_unix)
+    catch e
+        error("Failed to get timestamp for version $version: $e")
     end
-    return nothing
 end
