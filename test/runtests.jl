@@ -16,6 +16,7 @@ using Dates: Day, Hour
     println("\n=== Running unit tests (no network required) ===")
     include("test_unit_mocked.jl")
     include("test_error_handling.jl")
+    include("test_repl_mode.jl")
 
     # ========================================================================
     # Integration tests that require network access

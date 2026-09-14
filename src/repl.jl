@@ -1,32 +1,138 @@
-# REPL mode integration using ReplMaker
+# REPL mode integration built directly on REPL.LineEdit.
+#
+# ReplMaker.jl is deliberately not used here: `ReplMaker.initrepl` calls
+# `REPL.LineEdit.setup_search_keymap`, which Julia 1.13 removed along with the old
+# incremental ^R/^S search prompt (superseded by `LineEdit.history_search`, which is
+# already part of `LineEdit.history_keymap`). Driving LineEdit ourselves lets us
+# feature-detect the handful of internals that moved between 1.10 and 1.13.
 
-using ReplMaker
 using REPL
+using REPL: LineEdit
+
+"Name this mode is registered under in the shared history provider."
+const MODE_NAME = :when_repl_mode
+
+"Key that switches from `julia>` into `when>`."
+const START_KEY = '}'
 
 """
-    init_repl_mode()
+    search_prompt_and_keymap(hp) -> (prompt, keymap)
+
+Build the incremental history-search prompt and keymap for a custom mode, when this
+Julia version still has one.
+
+Up to Julia 1.12, `LineEdit.setup_search_keymap` returned a `(prompt, keymap)` pair that
+every non-`julia>` mode had to splice into its own keymap to get ^R/^S search. Julia 1.13
+removed it: ^R/^S now call `LineEdit.history_search`, which lives in
+`LineEdit.history_keymap` and needs no separate prompt. Returns `(nothing, nothing)` there.
+"""
+function search_prompt_and_keymap(hp)
+    if isdefined(LineEdit, :setup_search_keymap)
+        return LineEdit.setup_search_keymap(hp)
+    end
+    return (nothing, nothing)
+end
+
+"""
+    auto_closing_brackets(repl) -> Bool
+
+Whether this REPL auto-inserts closing brackets (Julia 1.13+, enabled by default).
+"""
+function auto_closing_brackets(repl)
+    isdefined(LineEdit, :bracket_insert_keymap) || return false
+    opts = repl.options
+    return hasproperty(opts, :auto_insert_closing_bracket) && opts.auto_insert_closing_bracket
+end
+
+"""
+    insert_start_key(repl, s::LineEdit.MIState)
+
+Handle `}` when it should *not* switch modes, i.e. mid-line.
+
+This mirrors how Base handles `]` for the Pkg mode: with auto-closing brackets on, typing
+a closing brace that is already sitting under the cursor steps over it rather than
+inserting a duplicate.
+"""
+function insert_start_key(repl, s::LineEdit.MIState)
+    if auto_closing_brackets(repl)
+        buf = LineEdit.buffer(s)
+        if !eof(buf) && peek(buf, Char) == START_KEY
+            LineEdit.edit_move_right(buf)
+        else
+            LineEdit.edit_insert(buf, START_KEY)
+        end
+        LineEdit.refresh_line(s)
+    else
+        LineEdit.edit_insert(s, START_KEY)
+    end
+    return nothing
+end
+
+"""
+    init_repl_mode(repl = Base.active_repl)
 
 Initialize a custom REPL mode for the `when` command.
 This creates a new REPL mode activated with `}` (similar to `]` for Pkg mode).
 """
-function init_repl_mode()
-    # Initialize the REPL mode using ReplMaker
-    # Use `}` as the trigger character (next to `]` on keyboard)
-    ReplMaker.initrepl(
-        parse_when_command,
-        prompt_text="when> ",
-        prompt_color=:cyan,
-        start_key='}',
-        mode_name="when_repl_mode",
-        startup_text=false
+function init_repl_mode(repl = Base.active_repl)
+    if !isdefined(repl, :interface)
+        repl.interface = REPL.setup_interface(repl)
+    end
+    julia_mode = repl.interface.modes[1]
+
+    prefix = repl.hascolor ? Base.text_colors[:cyan] : ""
+    suffix = repl.hascolor ? (repl.envcolors ? Base.input_color : repl.input_color()) : ""
+
+    when_mode = LineEdit.Prompt("when> ";
+        prompt_prefix = prefix,
+        prompt_suffix = suffix,
+        complete = REPL.REPLCompletionProvider(),
+        sticky = true,
     )
+    when_mode.on_done = REPL.respond(parse_when_command, repl, when_mode)
+
+    # Share the julia mode's history, tagged so `when>` lines are replayed into `when>`.
+    hp = julia_mode.hist
+    hp.mode_mapping[MODE_NAME] = when_mode
+    when_mode.hist = hp
+
+    search_prompt, skeymap = search_prompt_and_keymap(hp)
+    prefix_prompt, prefix_keymap = LineEdit.setup_prefix_keymap(hp, when_mode)
+
+    # Same layering Base uses for shell/help/pkg modes, minus the pieces this Julia
+    # version does not have.
+    keymaps = Dict{Any, Any}[REPL.mode_keymap(julia_mode), prefix_keymap, LineEdit.history_keymap]
+    isnothing(skeymap) || pushfirst!(keymaps, skeymap)
+    auto_closing_brackets(repl) && push!(keymaps, LineEdit.bracket_insert_keymap)
+    push!(keymaps, LineEdit.default_keymap, LineEdit.escape_defaults)
+    when_mode.keymap_dict = LineEdit.keymap(keymaps)
+
+    # `}` at the start of an empty buffer enters the mode; anywhere else it is a brace.
+    julia_mode.keymap_dict = LineEdit.keymap_merge(julia_mode.keymap_dict, Dict{Any, Any}(
+        START_KEY => function (s::LineEdit.MIState, o...)
+            if isempty(s) || position(LineEdit.buffer(s)) == 0
+                buf = copy(LineEdit.buffer(s))
+                LineEdit.transition(s, when_mode) do
+                    LineEdit.state(s, when_mode).input_buffer = buf
+                end
+            else
+                insert_start_key(repl, s)
+            end
+        end,
+    ))
+
+    push!(repl.interface.modes, when_mode)
+    isnothing(search_prompt) || push!(repl.interface.modes, search_prompt)
+    push!(repl.interface.modes, prefix_prompt)
+
+    return when_mode
 end
 
 """
     parse_when_command(input::String)
 
 Parse input from the when REPL mode and convert it to Julia code that will be executed.
-This function is called by ReplMaker for each line entered in the `when>` prompt.
+This function is called for each line entered at the `when>` prompt.
 """
 function parse_when_command(input::String)
     # Trim the input and convert to String (strip returns SubString)
