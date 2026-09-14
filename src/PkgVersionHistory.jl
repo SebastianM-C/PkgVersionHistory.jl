@@ -5,7 +5,6 @@ using JSON
 using Pkg
 using Pkg.Registry: reachable_registries, RegistryInstance
 using Preferences
-using ReplMaker
 using Scratch
 using TimeZones
 using TOML
